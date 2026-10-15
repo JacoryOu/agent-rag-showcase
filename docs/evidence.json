@@ -1,0 +1,34 @@
+{
+  "record_type": "sanitized_summary_of_prior_local_execution_not_a_new_test_run",
+  "run_date": "2026-10-15",
+  "public_scope": "documentation_synthetic_data_real_screenshots_and_artifact_checker_only",
+  "real_execution": {
+    "mock_used": false,
+    "synthetic_documents": 1,
+    "chunks": 2,
+    "chunk_size": 256,
+    "chunk_overlap": 32,
+    "conversations": 1,
+    "completed_turns": 2,
+    "http_statuses": {"live": 200, "ready": 200, "conversation_list": 200, "turn_history": 200},
+    "api_matches_sql": true,
+    "active_state_released": true,
+    "duration_ms": [14467, 3590],
+    "duration_definition": "asked_at_to_answered_at_not_TTFT_or_benchmark",
+    "checkpoint": {
+      "persisted": true,
+      "main_agent_ai_messages": 3,
+      "research_results": 2,
+      "tool_statuses": ["has_evidence", "has_evidence"],
+      "retained_candidate_counts": [1, 1],
+      "main_agent_usage_available": [true, true, true],
+      "not_total_billable_request_count": true
+    }
+  },
+  "screenshots": [
+    {"path": "docs/images/01-knowledge-answer.jpg", "width": 1265, "height": 1101, "sha256": "3925a30ef31bf711100c1b3400bf626b50fa1ac95115946bf31cba85693cb4df"},
+    {"path": "docs/images/02-context-followup.jpg", "width": 1265, "height": 1609, "sha256": "3f13e2ed270c93df6192f188e02f540191dc8d68495dd336f4b8218fdd7d7697"},
+    {"path": "docs/images/03-restored-history.jpg", "width": 1265, "height": 712, "sha256": "331313b8958e2084deac64b3fe3f0950d88d748ee0a74cef88b42f97eeb35c00"}
+  ],
+  "limitations": ["business_source_and_original_tests_not_published", "small_demo_not_answer_quality_benchmark", "no_production_or_load_test_evidence", "personal_ownership_and_contributions_not_inferred_from_code"]
+}
