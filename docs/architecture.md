@@ -40,12 +40,14 @@ flowchart TD
 | 无命中/查询失败合同 | 已实现并验证 | graph.py:research；has_no_result与failed区分，离线失败用例；本次截图未做故障注入 |
 | 多轮、历史、刷新恢复 | 已实现并验证 | conversation_run_service.py、conversation_history_postgres.py、sse.py、React App；本次2轮与真实HTTP/SQL/Checkpoint读回 |
 | 完整会话scope过滤 | 已实现并验证 | dependencies.py:scoped_thread_id；Repository完整WHERE；受控跨user/tenant测试，不能声称文档ACL |
+| 检索层租户隔离 | 已实现并验证 | rag_runtime.py:retrieve 以tenant_id元数据过滤召回；rag.py:LlamaIndexRetrieverAdapter 逐条核对返回节点归属，越界即整次失败；过滤构造或后端过滤出错时不去掉过滤重试；test_tenant_retrieval_chroma.py真实Chroma测试，30题开发集越权题 |
+| 工具参数校验 | 已实现并验证 | graph.py:research 在检索前校验模型给的question：非字符串、清理控制字符后为空、超过2048字均返回invalid_question结构化错误且不调用检索；换行/制表符转空格；test_knowledge_base_tool_stage_f.py（11/3新增，先写测试后实现） |
 | JWT与成员撤销 | 已实现并验证 | auth.py:JwtIdentityVerifier；tenant_membership.py；同Token/应用下撤销后下次请求拒绝，受控HTTP测试 |
 | 主Agent预算 | 已实现并验证 | context_budget.py:ensure_context_budget与middleware；逐调用估算、最小预留及动态输出cap，离线与历史usage样本 |
 | HTTP超时/有限重试 | 已实现并验证 | model_provider.py、model_errors.py；同步/异步客户端5秒连接、60秒其他阶段、额外重试1次，受控本地socket验证 |
 | 心跳、陈旧running清理 | 已实现并验证 | Service独立心跳；Repository:reconcile_stale_running；相关测试/历史真实PG记录，awaiting_approval保留 |
 | Checkpoint与旧审批续接 | 已实现并验证 | PostgresSaver装配、Command旧图；历史真实PG续接记录；本次只验证消息持久化及读取，不验证重启续跑 |
-| 新图强制答案支持门禁 | 开发中/已知问题 | 有高分候选即可has_evidence，提示约束不能代替强校验；尚无独立答案质量测试集 |
+| 新图强制答案支持门禁 | 开发中/已知问题 | 有高分候选即可has_evidence，提示约束不能代替强校验；已有30题开发集（字符串规则判分，见evaluation.md第4节），尚无独立留出集或答案支持度判定 |
 | 最终生成与落库强原子成功 | 开发中/已知问题 | 最终落库失败可能先final再history error，不承诺全局强原子 |
 | 已声明的local模型模式 | 开发中/已知问题 | Settings枚举存在，但当前模型工厂只实现dashscope分支，不能视为已支持多厂商切换 |
 | 新环境/平台可运行性 | 已实现但未验证 | 当前代码有本地启动入口；干净Python安装、Linux/GPU/容器、其他浏览器未验；本仓库没有完整源码供外部复现 |
