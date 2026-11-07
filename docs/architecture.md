@@ -1,6 +1,6 @@
 # 实际架构、功能状态与实现定位
 
-核对日期：2026-10-15。以下模块/符号是**原本地实现定位，不代表源码已在本仓库公开**。已检查实际装配、路由、图、仓库、预算、SDK、前端、依赖与已有运行记录；不单独以README或规划证明功能。
+核对日期：2026-10-15；2026-11-07 补充“请求可观测性”“MCP 检索入口”两行。以下模块/符号是**原本地实现定位，不代表源码已在本仓库公开**。已检查实际装配、路由、图、仓库、预算、SDK、前端、依赖与已有运行记录；不单独以README或规划证明功能。
 
 ## 请求与数据流
 
@@ -43,6 +43,8 @@ flowchart TD
 | 检索层租户隔离 | 已实现并验证 | rag_runtime.py:retrieve 以tenant_id元数据过滤召回；rag.py:LlamaIndexRetrieverAdapter 逐条核对返回节点归属，越界即整次失败；过滤构造或后端过滤出错时不去掉过滤重试；test_tenant_retrieval_chroma.py真实Chroma测试，30题开发集越权题 |
 | 工具参数校验 | 已实现并验证 | graph.py:research 在检索前校验模型给的question：非字符串、清理控制字符后为空、超过2048字均返回invalid_question结构化错误且不调用检索；换行/制表符转空格；test_knowledge_base_tool_stage_f.py（11/3新增，先写测试后实现） |
 | JWT与成员撤销 | 已实现并验证 | auth.py:JwtIdentityVerifier；tenant_membership.py；同Token/应用下撤销后下次请求拒绝，受控HTTP测试 |
+| MCP检索入口 | 已实现并验证 | mcp_server.py:create_kb_mcp（MCP Python SDK v2，Streamable HTTP，无状态、JSON响应，挂载在/kb/mcp）；TokenVerifier复用JwtIdentityVerifier，无效凭证401且工具不执行；工具内每次调用CurrentTenantService.resolve；复用同一个research，返回白名单status/evidence/sources，8000字上限整条取舍；test_mcp_server.py 23项真实HTTP请求测试（401、伪造tenant_id、撤权、截断等）；MCP Python客户端接真实检索联调：q03（tenant-a）ok，q08（tenant-b，伪造tenant_id=tenant-a）no_evidence |
+| 请求可观测性 | 已实现并验证 | request_metrics.py:RequestRecorder 每个/v1/agent/stream请求写一条JSONL（status、检索/重排/过滤/生成耗时、Token、tenant_hash）；evals/request_report.py最近秩P50/P95；test_request_recording.py、test_request_report.py；本地真实服务冒烟3条记录，未见问题原文或原始租户ID |
 | 主Agent预算 | 已实现并验证 | context_budget.py:ensure_context_budget与middleware；逐调用估算、最小预留及动态输出cap，离线与历史usage样本 |
 | HTTP超时/有限重试 | 已实现并验证 | model_provider.py、model_errors.py；同步/异步客户端5秒连接、60秒其他阶段、额外重试1次，受控本地socket验证 |
 | 心跳、陈旧running清理 | 已实现并验证 | Service独立心跳；Repository:reconcile_stale_running；相关测试/历史真实PG记录，awaiting_approval保留 |
