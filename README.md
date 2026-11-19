@@ -1,100 +1,59 @@
 # Agent RAG Showcase
 
-一个面向内部文档问答场景的通用对话与知识库 Agent 项目，重点展示 **工具调用、证据检索、多轮会话和服务工程边界**。
+面向多租户企业文档的知识库问答 Agent。用户可以确认入库资料、对当前可读的知识库提问，并打开引用核对原文。通用问答、多轮追问与会话历史在同一界面提供。
 
-> **公开范围：展示材料版，不是完整源码发布版。** 本仓库提供架构、实现状态、真实运行截图、合成数据及评测说明；业务后端、前端和测试源码的公开权尚未完成确认，暂不上传。因此不能 clone 后直接启动完整应用，也不声称第三方可以复现全部测试。源码范围见 [公开清单](docs/public-scope.md)。
+本仓库提供架构说明、合成资料、真实运行截图与验收摘要。业务源码与完整运行环境的公开范围见[公开清单](docs/public-scope.md)。
 
-## 30 秒看懂
+## 核心功能
 
-- 普通问题由单个 LangChain Agent 回答；知识库问题通过 `research(question)` 调用固定的 LangGraph 证据工作流。
-- RAG：查询改写 → Chroma 召回 → FlagReranker 重排 → 严格阈值过滤 → 返回文档原文与来源，再由主 Agent 回答。
-- FastAPI/SSE 与 React 显示处理阶段、答案、引用及多轮历史；新 Agent 不逐 Token 公开生成内容。
-- PostgreSQL 业务历史与框架 Checkpoint 分离；短事务、心跳和陈旧状态清理管理活动轮次。
-- JWT 可信用户、当前租户成员校验、完整会话 scope、近似 Token 预算和 HTTP 超时/有限重试已有实现及对应验证记录。
-- 检索按租户元数据过滤召回，返回前再逐条核对归属，越界即整次失败、不降级重试；工具对模型给出的参数先校验再检索。
-- 检索工具另以 MCP 服务提供（Streamable HTTP，挂在同一 FastAPI 的 `/kb/mcp`）：身份只取自请求头 JWT，无效凭证在协议层 401、工具不执行；每次调用重读成员关系；工具参数只有问题文本，多传的 `tenant_id` 被忽略。单元测试走真实 HTTP 请求，另用 MCP Python 客户端接真实检索联调。
-- 每个 `/v1/agent/stream` 请求写一条 JSONL：状态、分阶段耗时、Token 用量；租户 ID 做 SHA-256 假名化，不记问题和回答原文；报表按最近秩算 P50/P95。
-- 30 题多租户开发集：端到端基线 20/30，固定拒答话术后三次运行 22/30、24/30、25/30（30 题样本，差值在噪声范围内，口径见 [evaluation.md](docs/evaluation.md) 第 4 节）。
-
-**阶段：本地可运行的个人开发/演示项目。** 没有生产上线、高并发、真实企业客户或业务收益证据；不是多 Agent 平台、NL2SQL 或个人认知 IP 系统。
-
-## 架构
-
-```mermaid
-flowchart LR
-    UI[React] --> API[FastAPI / 鉴权]
-    API --> RUN[ConversationRunService]
-    RUN --> AG[单个 LangChain Agent]
-    AG --> BUD[上下文预算] --> LLM[兼容模型 SDK]
-    AG --> TOOL[research 工具] --> RAG[LangGraph 证据 RAG]
-    RAG --> RET[LlamaIndex / Chroma]
-    RAG --> RANK[FlagReranker]
-    RUN --> PG[(PostgreSQL 历史)]
-    AG --> CP[Checkpoint] --> PG
-    RUN --> SSE[公开事件投影] --> UI
-    MC[MCP 客户端] --> MCP["/kb/mcp · JWT 校验"] --> TOOL
-```
-
-完整流程、实现定位与功能分类：[architecture.md](docs/architecture.md)。
+- **文档入库与历史查询**。上传后先解析和预览，确认后由后台 worker 写入索引。制度资料按生效日期和正文修订范围检索，可追溯当时引用的片段。
+- **多租户访问控制**。Keycloak 通过 OIDC 登录，API 验证 JWT 并读取当前成员关系。用户所在组和知识库授权决定可读范围，检索在召回前限制租户及可读库，首段答案发出前再复核证据权限。
+- **按证据回答**。可读知识库的名称、描述或标签命中时先检索。LangGraph 执行改写、召回、重排和证据筛选。当前轮缺少支持原题的依据时，回答「未找到可用依据」并返回零引用。依赖故障单独报告。
+- **会话与服务**。FastAPI/SSE 推送阶段、答案与引用。PostgreSQL 分开保存业务历史和 LangGraph Checkpoint，每个会话同时只处理一轮。另提供 Streamable HTTP MCP 检索入口与逐请求日志。
+- **本地交付**。Docker Compose 编排 React、FastAPI、PostgreSQL、Keycloak 与入库 worker，通过健康检查管理启动顺序，并用独立任务初始化 Chroma 索引。
 
 ## 真实运行效果
 
-以下截图采集于 **2026-10-15 的同一版本**：远端真实模型 + 本地 Embedding/Reranker/Chroma + 新建 PostgreSQL 演示库 + 原 React/FastAPI 应用。未使用 Mock 响应、静态页面、设计稿或图片合成。资料、用户和问答均为明确合成数据，凭据未进入截图。
+以下截图来自 2026-11-19 的 Docker 试用栈，使用真实 Keycloak、模型、PostgreSQL 与 Chroma。测试数据为合成资料，展示图裁去导航和账号栏。[场景与验收记录](docs/demo.md)
 
-### 1. 知识库问题与来源
+### 按日期查询并打开引用
 
-输入：“星舟演示组织的设备预约需要提前多久、在哪里提交、由谁确认？请依据知识库回答。”
+询问「2021-01-01 住宿标准是多少？」得到每晚不超过 300 元，并打开当时有效的 `old.md` 原文。会话把实时回答更新为持久化历史后，引用弹窗仍保持打开。
 
-输出：“两个演示工作日、星舟预约板、演示管理员”，并引用 `synthetic_handbook.md`；模型同时说明资料完全虚构、不用于现实决策。体现 Agent → 工具 → 证据 RAG → 回答与引用 → 历史持久化的闭环。
+![历史住宿标准与引用原文](docs/images/04-historical-citation.jpg)
 
-![真实知识库回答和来源](docs/images/01-knowledge-answer.jpg)
+### 两个租户问同一个问题
 
-### 2. 同会话连续追问
+两个合成租户都问「蓝鲸编号 ZX-8821 出现在哪里？」。甲租户只有资料索引，返回「未找到可用依据」且无引用。乙租户有观测记录，回答「2024 年、北纬 30 度」，并引用本租户文档。[甲租户截图](docs/images/05-tenant-a-refusal.jpg) · [乙租户截图](docs/images/06-tenant-b-answer.jpg)
 
-输入：“刚才说要提前多久？预约板和确认人分别是什么？”
+## 架构与验证
 
-输出沿用上轮语境的三个要点，两轮历史均保留。Checkpoint 消息实际参与后续生成，不只是界面排列历史文本。
+```mermaid
+flowchart LR
+    UI[React] --> ID[Keycloak OIDC]
+    UI --> API[FastAPI]
+    API --> ACL[JWT / 成员关系 / 知识库授权]
+    ACL --> AG[LangChain Agent]
+    AG --> RAG[LangGraph 证据检索]
+    RAG --> V[(Chroma)]
+    ACL --> PG[(PostgreSQL)]
+    API --> W[入库 worker]
+    W --> V
+    W --> PG
+    AG --> CP[Checkpoint] --> PG
+    AG --> OUT[证据权限复核 / SSE] --> UI
+```
 
-![真实连续追问](docs/images/02-context-followup.jpg)
+- **真实浏览器**。最终 OIDC 验收 12 项通过，覆盖登录、退出、令牌过期、目录路由、历史引用与双租户问答隔离。[验收明细](docs/evaluation.md)
+- **低并发试跑**。隔离栈中 13 条正常问答完成，两份合成文档成功入库。同会话的重叠请求按预期返回 `409 conversation_busy`。样本只覆盖两个租户各一个在途问答及一份文件同时入库。[试跑范围](docs/evaluation.md)
+- **问答开发集**。30 题端到端基线为 20/30，固定拒答话术后的三次运行分别为 22/30、24/30、25/30。题集与判分属于开发验证，详见[评测口径](docs/evaluation.md)第 4 节。
 
-### 3. 刷新后恢复历史
+[详细架构与权限边界](docs/architecture.md) · [个人贡献与 AI 协作](docs/contributions.md) · [截图哈希与来源摘要](docs/evidence.json)
 
-操作：切到空会话 → 刷新 → 页面内存凭据清空 → 重新认证。原会话的两轮内容从服务端恢复；HTTP 历史与真实 SQL 记录一致。截图为恢复后的末轮视口。
-
-![刷新重新认证后的历史](docs/images/03-restored-history.jpg)
-
-[演示步骤、实际结果与启动条件](docs/demo.md) · [评测与测试边界](docs/evaluation.md) · [脱敏证据摘要](docs/evidence.json)
-
-## 技术取舍
-
-| 选择 | 解决的问题 | 当前限制 |
-|---|---|---|
-| 固定证据 RAG 作为工具 | 将可测试的检索过程与模型选择/最终生成分开 | 非空高分证据不等于答案被证实；新链路无强制 answerability 门禁 |
-| 短事务后执行模型 | 避免持有数据库行锁等待长模型请求 | 需要心跳与陈旧状态补偿，不是任意任务自动重跑 |
-| 每次主模型调用前预算检查 | 工具回填后再次计算输入并动态设置输出上限 | 近似估算；内部改写和旧图不受同一中间件保护，无自动摘要 |
-| 公开 SSE 白名单 | 不向界面透出全部框架状态、原始工具正文或内部异常 | 新 Agent 公开阶段/最终结果，而非逐 Token 输出 |
-| 每请求读取当前成员源 | 同 Token、同应用实例撤销成员后下一请求拒绝 | 单机文件源；尚无文档级 ACL 或完整登录平台 |
-| MCP 用 Streamable HTTP，成员校验放在工具内 | 每个请求自带用户令牌，适合多用户；401 只在协议层，“成员无效”与“成员源读不到”在工具内分成不同状态 | SDK 鉴权只对 HTTP 生效；多跳问题整句一次调用会漏召回，需调用方拆分 |
-| 逐请求 JSONL 记录 | 排障与延迟分位统计，不改检索和生成行为 | 单机文件；审批续接流程本版不记录；无盐哈希是假名化，可被字典反推 |
-
-## 个人贡献与 AI 辅助
-
-开发记录支持项目作者参与会话 scope、短事务、证据工具边界、Agent 装配、阈值/预算取舍及部分实现与真实测试复现。前端、运行服务、鉴权、心跳、SDK 策略和测试中存在 AI 辅助/参考实现，不能据此写成全部独立编码。
-
-本次展示整理、隔离真实运行及截图采集也由 AI 辅助执行。具体个人职责、时间投入和参考来源仍应由作者补齐；不把个人项目冒充任职公司生产业绩。见 [contributions.md](docs/contributions.md)。
-
-## 如何阅读与复核
-
-本仓库不含应用业务源码，所以没有可用的 `npm run dev` 或完整服务安装入口。它包含的 Python 工具仅检查公开材料：
+## 复核展示材料
 
 ```bash
-git clone https://github.com/JacoryOu/agent-rag-showcase.git
-cd agent-rag-showcase
 python tools/check_showcase.py
 ```
 
-Python 工具仅使用标准库；可检查文件白名单、配置空值、敏感模式、本地链接和截图 SHA-256，**不会运行模型或证明应用功能正确**。完整本地应用还需要业务源码、Python/Node 依赖、模型凭据、授权权重、新演示库与索引，详见 [公开范围](docs/public-scope.md) 和 [组件来源](NOTICE.md)。
-
-## 已知限制
-
-本轮真实演示只有 1 篇合成文档、2 个问题；30 题开发集由作者自己出题、字符串规则判分，没有独立留出集；都不是大样本答案质量或生产安全验收。没有文档 ACL、自动摘要、通用请求幂等、任意任务重启自动续跑、多 Agent 协作、真实联网检索或微调训练成果。最终落库失败可能在 final 后追加历史错误，不能称为强原子提交。历史候选筛选指标也不能当作答案准确率。没有登录注册：服务只验证令牌，演示令牌由受控开发 CLI 签发，实际部署应由外部身份系统签发。
+脚本检查公开文件白名单、相对链接、配置空值、文本敏感模式及截图 SHA-256。应用验收使用原项目的隔离试用环境，记录见[演示与复现范围](docs/demo.md)。本地试用已覆盖预配置账号登录。自助注册、邀请、公开 CI 与生产容量仍未验收。

@@ -1,70 +1,34 @@
-# 实际架构、功能状态与实现定位
+# 架构与权限边界
 
-核对日期：2026-10-15；2026-11-07 补充“请求可观测性”“MCP 检索入口”两行。以下模块/符号是**原本地实现定位，不代表源码已在本仓库公开**。已检查实际装配、路由、图、仓库、预算、SDK、前端、依赖与已有运行记录；不单独以README或规划证明功能。
+当前文档对应 2026-11-19 集成版本。[演示场景](demo.md)和[验收记录](evaluation.md)列出各批实测范围。模块名指向原应用中的实现位置。
 
-## 请求与数据流
+## 身份与知识库访问
 
-```mermaid
-flowchart TD
-    UI[React / fetch SSE] --> API[FastAPI]
-    API --> AUTH[JWT 验证器 / CurrentTenantService]
-    AUTH --> MEMBER[管理员成员文件]
-    API --> RUN[ConversationRunService]
-    RUN --> HIST[历史 Repository] --> PG[(PostgreSQL)]
-    RUN --> AG[LangChain 单 Agent]
-    AG --> BUD[ContextBudgetMiddleware] --> MODEL[ChatQwen / HTTP SDK]
-    AG --> TOOL[research] --> RAG[LangGraph 证据子图]
-    RAG --> REWRITE[Query Rewrite Adapter] --> MODEL
-    RAG --> RET[LlamaIndex / Chroma]
-    RAG --> RERANK[FlagReranker / 筛选]
-    AG --> CP[Postgres Checkpointer / Store] --> PG
-    RUN --> LEGACY[旧图审批恢复]
-    LEGACY --> CP
-    RUN --> SSE[公开事件适配] --> UI
-```
+1. React 使用 Keycloak OIDC 的授权码流程和 PKCE 登录。FastAPI 验证访问令牌的签名、签发方、受众和有效期，再从当前成员关系确定租户。业务接口使用服务端解析的身份。
+2. 试用栈的成员关系保存在 PostgreSQL。服务端综合当前用户、组成员关系和库授权来计算可读范围。具有知识库管理权限的角色仍须通过正文读取校验。会话和 Checkpoint 按租户、用户、会话三者隔离。
+3. 检索在向量召回和 top-K 之前按租户、可读库及可用发布范围过滤。候选加入重排前复核归属，越界或过滤失败时结束本次检索。MCP 使用同一 `research` 工具，调用者身份取自经过验证的请求令牌，工具只接收问题文本。
+4. 浏览器登出结束登录会话，已签发的访问令牌仍可能在有效期内通过服务端验签。成员和知识库授权在服务端重新校验，浏览器登出、令牌过期与撤销业务权限是三个独立动作。
 
-1. 前端提交问题、公开thread_id和Bearer。服务资格与用户身份分开；服务端JWT确定可信用户，当前成员源确定有效租户，不接受自报tenant/user覆盖。
-2. 路由形成完整tenant/user/thread scope；仓库先在短事务中创建running，事务提交后Service才执行图/模型。
-3. 主Agent每次模型请求前计算近似预算；模型选择直接回答或调用research。一次证据子图按改写→召回→重排→严格score大于阈值过滤→来源/证据状态返回，不生成最终答案。
-4. 工具返回过滤后的正文和来源，再由主Agent组织回答；无命中是has_no_result，工具异常转failed及安全提示。有证据不自动证明答案可支持。
-5. SSE只投影公开字段；Service持久化阶段与终态、答案、来源、耗时并释放活动状态。模型上下文来自同scope Checkpoint消息，历史表主要用于展示/查询。
-6. Command审批恢复沿用旧图；不能把旧图judge/HITL算作新Agent的可回答性门禁。旧图恢复、新Agent使用不同checkpoint命名空间。
+对应模块包括 `auth.py`、`tenant_membership.py`、`kb_service.py`、`retrieval_scope.py`、`kb_retrieval.py` 和 `mcp_server.py`。
 
-## 功能分类
+## 从上传到引用
 
-| 功能 | 完成状态 | 实现定位与验证范围 |
+1. React 上传文档。入库 worker 解析并生成预览，用户确认后才批量写入 Chroma。索引与文档发布状态决定文件能否进入检索。对于制度类文档，业务生效日期与修订的正文范围参与适用性判断。
+2. 查询时，`research_routing_middleware.py` 按请求向模型提供当前可读库的名称、描述和标签。命中目录主题时只强制本轮第一次 `research`。本轮检索结果返回后恢复自动选择。
+3. LangGraph 串联改写、Chroma 召回、重排、阈值筛选和来源整理。回答前，模型判断本轮证据是否支持草稿，服务端核对引用和逐字摘录是否来自本轮，以及正文是否包含所选事实值。缺少支持时统一返回「未找到可用依据」并保存零引用。检索或校验异常走错误流程。原题和证据的语义关系仍依赖模型判断。
+4. 首段答案发出前，服务端在短事务的一致快照内复核成员和来源权限。复核失败时拦截待发正文、引用及成功结束事件。首段发出后才发生撤权时，本轮可按此前核验的证据完结。下一轮和新的引用读取按当前权限判断。
+5. 前端可打开引用查看当时入库的原文片段及字符范围。历史时点查询使用匹配该日的正文版本；当前可读权限在读取历史回答和引用时仍会检查。
+
+对应模块包括 `kb_ingest.py`、`kb_worker.py`、`graph.py`、`conversation_evidence.py`、`conversation_run_service.py` 和 `sse.py`。
+
+## 会话运行与部署
+
+| 设计 | 运行行为 | 验证范围 |
 |---|---|---|
-| 普通回答/模型工具选择 | 已实现并验证 | backends.py:ProductionResources.start/create_agent；graph.py:build_knowledge_base_tool；历史真实模型和确定性模型测试 |
-| Markdown、分块、向量索引 | 已实现并验证 | rag.py、rag_bootstrap.py:build_initial_rag_index；本次真实合成1文档/2分块 |
-| 改写、召回、重排、阈值、来源 | 已实现并验证 | graph.py:build_evidence_rag_subgraph，reranker.py；本次真实模型/检索及图、工具离线测试 |
-| 无命中/查询失败合同 | 已实现并验证 | graph.py:research；has_no_result与failed区分，离线失败用例；本次截图未做故障注入 |
-| 多轮、历史、刷新恢复 | 已实现并验证 | conversation_run_service.py、conversation_history_postgres.py、sse.py、React App；本次2轮与真实HTTP/SQL/Checkpoint读回 |
-| 完整会话scope过滤 | 已实现并验证 | dependencies.py:scoped_thread_id；Repository完整WHERE；受控跨user/tenant测试，不能声称文档ACL |
-| 检索层租户隔离 | 已实现并验证 | rag_runtime.py:retrieve 以tenant_id元数据过滤召回；rag.py:LlamaIndexRetrieverAdapter 逐条核对返回节点归属，越界即整次失败；过滤构造或后端过滤出错时不去掉过滤重试；test_tenant_retrieval_chroma.py真实Chroma测试，30题开发集越权题 |
-| 工具参数校验 | 已实现并验证 | graph.py:research 在检索前校验模型给的question：非字符串、清理控制字符后为空、超过2048字均返回invalid_question结构化错误且不调用检索；换行/制表符转空格；test_knowledge_base_tool_stage_f.py（11/3新增，先写测试后实现） |
-| JWT与成员撤销 | 已实现并验证 | auth.py:JwtIdentityVerifier；tenant_membership.py；同Token/应用下撤销后下次请求拒绝，受控HTTP测试 |
-| MCP检索入口 | 已实现并验证 | mcp_server.py:create_kb_mcp（MCP Python SDK v2，Streamable HTTP，无状态、JSON响应，挂载在/kb/mcp）；TokenVerifier复用JwtIdentityVerifier，无效凭证401且工具不执行；工具内每次调用CurrentTenantService.resolve；复用同一个research，返回白名单status/evidence/sources，8000字上限整条取舍；test_mcp_server.py 23项真实HTTP请求测试（401、伪造tenant_id、撤权、截断等）；MCP Python客户端接真实检索联调：q03（tenant-a）ok，q08（tenant-b，伪造tenant_id=tenant-a）no_evidence |
-| 请求可观测性 | 已实现并验证 | request_metrics.py:RequestRecorder 每个/v1/agent/stream请求写一条JSONL（status、检索/重排/过滤/生成耗时、Token、tenant_hash）；evals/request_report.py最近秩P50/P95；test_request_recording.py、test_request_report.py；本地真实服务冒烟3条记录，未见问题原文或原始租户ID |
-| 主Agent预算 | 已实现并验证 | context_budget.py:ensure_context_budget与middleware；逐调用估算、最小预留及动态输出cap，离线与历史usage样本 |
-| HTTP超时/有限重试 | 已实现并验证 | model_provider.py、model_errors.py；同步/异步客户端5秒连接、60秒其他阶段、额外重试1次，受控本地socket验证 |
-| 心跳、陈旧running清理 | 已实现并验证 | Service独立心跳；Repository:reconcile_stale_running；相关测试/历史真实PG记录，awaiting_approval保留 |
-| Checkpoint与旧审批续接 | 已实现并验证 | PostgresSaver装配、Command旧图；历史真实PG续接记录；本次只验证消息持久化及读取，不验证重启续跑 |
-| 新图强制答案支持门禁 | 开发中/已知问题 | 有高分候选即可has_evidence，提示约束不能代替强校验；已有30题开发集（字符串规则判分，见evaluation.md第4节），尚无独立留出集或答案支持度判定 |
-| 最终生成与落库强原子成功 | 开发中/已知问题 | 最终落库失败可能先final再history error，不承诺全局强原子 |
-| 已声明的local模型模式 | 开发中/已知问题 | Settings枚举存在，但当前模型工厂只实现dashscope分支，不能视为已支持多厂商切换 |
-| 新环境/平台可运行性 | 已实现但未验证 | 当前代码有本地启动入口；干净Python安装、Linux/GPU/容器、其他浏览器未验；本仓库没有完整源码供外部复现 |
-| 文档ACL、登录注册/刷新、分布式IAM | 规划/未实现 | 当前是受控JWT主体+单机当前成员文件，不是完整用户平台 |
-| 自动摘要/历史裁剪、精确tokenizer | 规划/未实现 | 超限拒绝，不删除历史；内部改写和旧图不经过主Agent预算中间件 |
-| 有界重检索/通用请求幂等/自动重跑 | 规划/未实现 | 证据图内部一次改写检索；主Agent可再调工具，但没有明确检索循环预算或exactly-once |
-| 远程部署、并发容量、业务收益 | 规划/未实现或无证据 | 原部署文件为占位，无生产/负载/客户验收证明 |
+| 活动轮次、短事务与心跳 | 创建活动轮次后提交事务，再调用图与模型。重叠请求收到 `409 conversation_busy`，陈旧轮次可对账释放 | 受控后端回归和隔离栈同会话测试。低并发试跑未覆盖待审批轮次 |
+| 业务历史与 Checkpoint 分存 | 业务历史供展示和查询，Checkpoint 保存框架上下文。SSE 只投影公开阶段、正文、来源与终态 | 多轮问答、刷新恢复、历史与引用等场景分别验收 |
+| 模型调用控制 | 主 Agent 每次调用前检查 Token 预算，HTTP SDK 使用分阶段超时和有限重试 | 后端受控用例与历史运行数据。Token 数为估算 |
+| MCP 与请求日志 | Streamable HTTP 复用检索。JSONL 记录状态、分阶段耗时和 Token 用量，租户标识假名化 | 早期 MCP HTTP 自动化、真实客户端联调与日志冒烟，详见[评测说明](evaluation.md) |
+| Docker Compose | 编排 API、React 前端、PostgreSQL、Keycloak 和入库 worker。独立任务初始化 Chroma 索引，API 打开已有索引 | 本地隔离 Compose 栈。公开远端 CI 和生产容量仍待验证 |
 
-## 关键取舍
-
-- **单Agent + 固定工具图**：模型负责选择和生成，固定RAG提供可测试证据流程；不是多Agent协作。
-- **图与依赖分离**：图依赖AgentDependencies业务合同；底层检索/SDK/重排由适配层提供。保留同步RAG节点的executor调度，不能无证据称其阻塞事件循环或全部应改async。
-- **短事务与独立心跳**：不持数据库锁等待模型；用事务终态更新与状态补偿管理残留活动轮次，不自动重跑模型。
-- **三个状态概念分开**：聊天历史供查询；Checkpoint保存框架消息/中断；陈旧轮次清理是failed+释放，并非真正恢复图。Store已装配不代表画像/长期记忆自动参与生成。
-- **预算保护**：每次主Agent请求估算系统消息、历史、工具定义及工具结果，cap取剩余安全空间和模型最大输出的较小值；不足最低预留拒绝。不是固定生成长度，也不保证精确计数。
-- **超时与公开边界**：HTTP阶段超时不是Agent整轮墙钟截止；部分事件后超时不应重播整轮或伪造成功。新Agent公开stage/final/error，旧图保留审批兼容。
-
-个人认知IP、聊天导入/画像访谈/记忆更新、内容采集/大纲/草稿/反馈、多平台输出与Skill沙盒没有集成到此主项目。LoRA/QLoRA仅了解原理和基本流程，无训练/评测成果。
+当前访问控制以租户、组、知识库授权和来源复核为主。自助注册、邀请、通用文档级 ACL 及生产级负载暂未纳入展示验收。

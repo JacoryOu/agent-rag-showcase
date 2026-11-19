@@ -19,6 +19,9 @@ ALLOWED = {
     "docs/images/01-knowledge-answer.jpg",
     "docs/images/02-context-followup.jpg",
     "docs/images/03-restored-history.jpg",
+    "docs/images/04-historical-citation.jpg",
+    "docs/images/05-tenant-a-refusal.jpg",
+    "docs/images/06-tenant-b-answer.jpg",
 }
 PATTERNS = {
     "absolute_local_path": r"(?i)(?<![a-z0-9])[a-z]:[/\\]|/Users/|/home/",
@@ -81,10 +84,17 @@ def main():
                 links += 1
 
     evidence = json.loads((ROOT / "docs/evidence.json").read_text(encoding="utf-8"))
-    for shot in evidence["screenshots"]:
+    screenshots = evidence["screenshots"]
+    expected_images = {name for name in ALLOWED if name.endswith(".jpg")}
+    recorded_images = {shot["path"] for shot in screenshots}
+    if recorded_images != expected_images or len(screenshots) != len(expected_images):
+        errors.append("docs/evidence.json: screenshot list differs from public image whitelist")
+    for shot in screenshots:
         name = shot["path"]
-        if name not in ALLOWED or hashlib.sha256((ROOT / name).read_bytes()).hexdigest() != shot["sha256"]:
-            errors.append(f"{name}: screenshot hash mismatch")
+        if name in expected_images & paths:
+            digest = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+            if digest != shot["sha256"]:
+                errors.append(f"{name}: screenshot hash mismatch")
 
     if args.staged:
         tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
@@ -98,7 +108,7 @@ def main():
     if errors:
         print("\n".join(errors))
         return 1
-    print(f"PASS: {len(paths)} whitelisted files; {links} local Markdown links; 3 screenshot hashes; empty example config; text scan; JSON/Python syntax")
+    print(f"PASS: {len(paths)} whitelisted files; {links} local Markdown links; {len(screenshots)} screenshot hashes; empty example config; text scan; JSON/Python syntax")
     if args.staged:
         print("PASS: staged whitelist and staged bytes match checked artifacts")
     print("Scope: static public-artifact checks only; not application tests, rights clearance, or a complete secret audit.")

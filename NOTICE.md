@@ -4,6 +4,8 @@
 
 ## 原应用实际依赖
 
+2026-11-19 的隔离试用栈使用 [Keycloak](https://www.keycloak.org/) 提供 OIDC 登录，[Docker Compose](https://docs.docker.com/compose/) 编排服务，[Playwright](https://playwright.dev/) 执行浏览器验收。以下依赖表保留早期展示环境的版本快照。
+
 版本来自本地安装元数据/已有依赖记录，是运行环境快照而非本仓库的安装合同。没有复制依赖源码或模型权重；请遵循各项目自身版权、许可证和模型服务条款。
 
 | 组件 | 已记录版本 | 在原应用中的职责/来源 |
