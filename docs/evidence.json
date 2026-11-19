@@ -42,7 +42,8 @@
     {"path": "docs/images/03-restored-history.jpg", "width": 1265, "height": 712, "sha256": "331313b8958e2084deac64b3fe3f0950d88d748ee0a74cef88b42f97eeb35c00"},
     {"path": "docs/images/04-historical-citation.jpg", "width": 1000, "height": 680, "sha256": "cb47486a4462e6f682188429afb4fc7a85ce04192f90cb4d464ed2c34365fa0c"},
     {"path": "docs/images/05-tenant-a-refusal.jpg", "width": 1000, "height": 680, "sha256": "fa28b46a8f8a9383ec73260c95573d5aea2d400db80623d095ae642edae01fc1"},
-    {"path": "docs/images/06-tenant-b-answer.jpg", "width": 1000, "height": 680, "sha256": "740186725b53c758a85e5ffa70bd828cea6a80abb55aa7ff8ec6565d771a7f24"}
+    {"path": "docs/images/06-tenant-b-answer.jpg", "width": 1000, "height": 680, "sha256": "740186725b53c758a85e5ffa70bd828cea6a80abb55aa7ff8ec6565d771a7f24"},
+    {"path": "docs/images/07-kb-management.jpg", "width": 980, "height": 929, "sha256": "941aa140b6d4b4074fcfdb6c59b5197712c632f70c88fbc4fcdfadc952626db5", "capture": "Edge and Playwright, real OIDC login, synthetic tenant catalog HTTP 200 and indexed yi-jing.md, workspace only"}
   ],
   "limitations": ["business_source_and_original_tests_not_published", "small_demo_not_answer_quality_benchmark", "no_production_or_load_test_evidence", "personal_ownership_and_contributions_not_inferred_from_code"]
 }

@@ -14,7 +14,13 @@
 
 ## 真实运行效果
 
-以下截图来自 2026-11-19 的 Docker 试用栈，使用真实 Keycloak、模型、PostgreSQL 与 Chroma。测试数据为合成资料，展示图裁去导航和账号栏。[场景与验收记录](docs/demo.md)
+以下截图来自 2026-11-19 的 Docker 试用栈，使用真实 Keycloak、模型、PostgreSQL 与 Chroma。测试数据为合成资料，截图保留工作区和问答主体。[场景与验收记录](docs/demo.md)
+
+### 登录后的知识库管理
+
+通过 Keycloak 登录后，进入知识库工作区可查看库列表、选择文件上传，并查看文档处理状态。截图中的合成文档 `yi-jing.md` 已入库。
+
+![登录后的知识库列表、文档上传入口与已入库状态](docs/images/07-kb-management.jpg)
 
 ### 按日期查询并打开引用
 
@@ -29,20 +35,33 @@
 ## 架构与验证
 
 ```mermaid
-flowchart LR
-    UI[React] --> ID[Keycloak OIDC]
-    UI --> API[FastAPI]
-    API --> ACL[JWT / 成员关系 / 知识库授权]
-    ACL --> AG[LangChain Agent]
-    AG --> RAG[LangGraph 证据检索]
-    RAG --> V[(Chroma)]
-    ACL --> PG[(PostgreSQL)]
-    API --> W[入库 worker]
-    W --> V
-    W --> PG
-    AG --> CP[Checkpoint] --> PG
-    AG --> OUT[证据权限复核 / SSE] --> UI
+flowchart TB
+    accTitle: 知识库入库与问答架构
+    accDescr: React 经 Keycloak 登录。FastAPI 校验身份和权限后处理入库或问答。入库先预览和确认。问答先按可读范围召回，输出前复核来源权限。
+    ID[Keycloak] -->|OIDC 登录| UI[React 浏览器界面]
+    UI --> API[FastAPI / 校验 JWT 和当前成员]
+    PG[(PostgreSQL)] -.->|成员关系与库授权| API
+
+    subgraph Ingestion[文档入库]
+        Upload[上传文件] --> Preview[Worker 解析并生成预览]
+        Preview --> Confirm[用户核对并确认]
+        Confirm --> Publish[Worker 写入 Chroma 并发布]
+    end
+
+    subgraph Answering[证据问答]
+        Agent[LangChain Agent / 可读库目录路由] --> Rewrite[LangGraph 查询改写]
+        Rewrite --> Search[按租户、可读库和发布范围从 Chroma 召回]
+        Search --> Rank[重排与证据筛选]
+        Rank --> Draft[模型生成与证据校验]
+        Draft --> Check[首段前复核成员及来源权限]
+        Check --> Output[SSE 返回答案和引用]
+    end
+
+    API -->|上传与确认请求| Upload
+    API -->|知识库问答请求| Agent
 ```
+
+Docker Compose 编排应用服务。React 接收 SSE 并展示答案，打开引用时由 API 按当前权限返回原文。PostgreSQL 分开保存业务历史与 Checkpoint。
 
 - **真实浏览器**。最终 OIDC 验收 12 项通过，覆盖登录、退出、令牌过期、目录路由、历史引用与双租户问答隔离。[验收明细](docs/evaluation.md)
 - **低并发试跑**。隔离栈中 13 条正常问答完成，两份合成文档成功入库。同会话的重叠请求按预期返回 `409 conversation_busy`。样本只覆盖两个租户各一个在途问答及一份文件同时入库。[试跑范围](docs/evaluation.md)

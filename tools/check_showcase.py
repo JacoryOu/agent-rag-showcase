@@ -22,6 +22,7 @@ ALLOWED = {
     "docs/images/04-historical-citation.jpg",
     "docs/images/05-tenant-a-refusal.jpg",
     "docs/images/06-tenant-b-answer.jpg",
+    "docs/images/07-kb-management.jpg",
 }
 PATTERNS = {
     "absolute_local_path": r"(?i)(?<![a-z0-9])[a-z]:[/\\]|/Users/|/home/",
